@@ -53,7 +53,7 @@ const DB = (() => {
 })();
 
 /* ---------- 設定 ---------- */
-const DEFAULTS = { cpm: 600, readSize: 21, serif: false, defaultMode: 'focus', recall: true, wakelock: true, theme: 'auto', noFade: false, seenHint: false };
+const DEFAULTS = { cpm: 700, readSize: 21, serif: false, defaultMode: 'focus', recall: false, wakelock: true, theme: 'auto', noFade: false, seenHint: false };
 let settings = { ...DEFAULTS };
 async function loadSettings() {
   const rec = await DB.get('kv', 'settings');
@@ -163,9 +163,17 @@ function splitSentences(text) {
   return out.length ? out : [arr.join('')];
 }
 
+/* ---------- 生URL等のノイズ除去（分割前に適用） ---------- */
+function stripUrls(t) {
+  return String(t || '')
+    .replace(/https?:\/\/[^\s）)」』、。]+/g, '')   // 生URL
+    .replace(/（\s*）|\(\s*\)/g, '')                  // 空になった括弧
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\s+([、。）」』])/g, '$1');
+}
 /* ---------- md装飾の除去（表示・捕獲用プレーン化） ---------- */
 function stripMd(text) {
-  let s = String(text || '');
+  let s = stripUrls(text);
   s = s.replace(/!\[([^\]]*)\]\((?:[^()]|\([^()]*\))*\)/g, '');
   s = s.replace(/\[([^\]]+)\]\((?:[^()]|\([^()]*\))*\)/g, '$1');
   s = s.replace(/`([^`]+)`/g, '$1');
@@ -176,6 +184,7 @@ function stripMd(text) {
 function inlineMd(text) {
   let h = esc(text);
   h = h.replace(/!\[([^\]]*)\]\((?:[^()]|\([^()]*\))*\)/g, '');
+  h = h.replace(/https?:\/\/[^\s）)」』、。<]+/g, '');
   h = h.replace(/`([^`]+)`/g, '<code>$1</code>');
   h = h.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/__([^_]+)__/g, '<b>$1</b>');
   h = h.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<i>$2</i>');
@@ -237,8 +246,8 @@ function buildUnits(blocks) {
   blocks.forEach((b, bi) => {
     if (b.type === 'heading') push({ role: 'head', level: b.level, text: b.text, hp: b.headingPath, bi, blockText: b.text, paceable: true });
     else if (b.type === 'code' || b.type === 'table') push({ role: b.type, text: b.text, hp: b.headingPath, bi, blockText: b.text, paceable: false });
-    else if (b.type === 'list') b.items.forEach((it, ii) => splitSentences(it).forEach((s) => push({ role: 'li', text: s, hp: b.headingPath, bi, ii, blockText: it, paceable: true })));
-    else splitSentences(b.text).forEach((s) => push({ role: b.type === 'quote' ? 'quote' : 'sent', text: s, hp: b.headingPath, bi, blockText: b.text, paceable: true }));
+    else if (b.type === 'list') b.items.forEach((it, ii) => { const c = stripUrls(it); splitSentences(c).forEach((s) => push({ role: 'li', text: s, hp: b.headingPath, bi, ii, blockText: c, paceable: true })); });
+    else { const c = stripUrls(b.text); splitSentences(c).forEach((s) => push({ role: b.type === 'quote' ? 'quote' : 'sent', text: s, hp: b.headingPath, bi, blockText: c, paceable: true })); }
   });
   return units;
 }
@@ -262,7 +271,7 @@ async function openReader(docId) {
   R.doc = doc;
   R.units = buildUnits(doc.blocks);
   R.paceable = R.units.map((u, i) => (u.paceable ? i : -1)).filter((i) => i >= 0);
-  R.chunks = {}; R._recallPending = false; R._wasPlaying = false;
+  R.chunks = {}; R._recallPending = false; R._wasPlaying = false; R._lastRecallPace = -999;
   R.mode = settings.defaultMode;
   if (!R.paceable.length) R.mode = 'free';
   R.cur = clamp(doc.pos || R.paceable[0] || 0, 0, Math.max(0, R.units.length - 1));
@@ -291,7 +300,7 @@ function setMode(mode, force) {
   R.mode = mode;
   $('#reader-mode').textContent = mode === 'focus' ? '集中' : mode === 'flash' ? 'フラッシュ' : '自由';
   const flow = $('#reader-flow'), rsvp = $('#reader-rsvp');
-  if (mode === 'flash') { flow.hidden = true; rsvp.hidden = false; $('#rsvp-guide').hidden = reduceMotion(); renderRsvp(); if (!R._flashWarned) { R._flashWarned = true; toast('フラッシュは拾い読み向け。光がつらい時は集中モードへ', 2600); } }
+  if (mode === 'flash') { flow.hidden = true; rsvp.hidden = false; $('#rsvp-guide').hidden = true; renderRsvp(); if (!R._flashWarned) { R._flashWarned = true; toast('フラッシュは拾い読み向け。速くしすぎ・光がつらい時は集中へ', 2600); } }
   else { rsvp.hidden = true; flow.hidden = false; renderFlow(); centerCurrent(false); }
   const hideCtrl = mode === 'free' ? 'hidden' : 'visible';
   $('#ctrl-play').style.visibility = hideCtrl; $('#ctrl-slow').style.visibility = hideCtrl; $('#ctrl-fast').style.visibility = hideCtrl;
@@ -333,7 +342,8 @@ function paintFlowState() {
 }
 function centerCurrent(smooth = true) {
   const el = $(`#reader-flow [data-u="${R.cur}"]`);
-  if (el) el.scrollIntoView({ block: 'center', behavior: smooth && !reduceMotion() ? 'smooth' : 'auto' });
+  // 自動再生中は瞬間移動（スムーススクロールが連続して衝突するとカクつくため）
+  if (el) el.scrollIntoView({ block: 'center', behavior: (smooth && !reduceMotion() && !R.playing) ? 'smooth' : 'auto' });
 }
 
 /* ---------- フラッシュ(RSVP) ---------- */
@@ -341,14 +351,8 @@ function renderRsvp() {
   const u = R.units[R.cur]; if (!u) return;
   const chunks = chunksOf(R.cur);
   R.curChunk = clamp(R.curChunk, 0, Math.max(0, chunks.length - 1));
-  const text = chunks[R.curChunk] || '';
-  const cp = [...text]; const oi = orpIndex(cp.length);
-  const chunkEl = $('#rsvp-chunk');
-  const plain = reduceMotion();
-  if (plain) chunkEl.innerHTML = esc(text);
-  else chunkEl.innerHTML = `${esc(cp.slice(0, oi).join(''))}<span class="orp">${esc(cp[oi] || '')}</span>${esc(cp.slice(oi + 1).join(''))}`;
-  chunkEl.style.transform = '';
-  if (!plain) { const piv = chunkEl.querySelector('.orp'); if (piv) { const pc = piv.offsetLeft + piv.offsetWidth / 2; chunkEl.style.transform = `translateX(${Math.round(chunkEl.offsetWidth / 2 - pc)}px)`; } }
+  // 中央固定・横揺れなし（チャンクごとのreflow計測もしない＝高速でも滑らか）
+  $('#rsvp-chunk').textContent = chunks[R.curChunk] || '';
   $('#rsvp-sentence').textContent = u.plain || u.text;
   updateBar();
 }
@@ -366,14 +370,13 @@ function dwellMs(unitIdx, chunkText) {
   const text = chunkText != null ? chunkText : u.plain;
   const chars = [...text].length || 1;
   let ms = (chars / settings.cpm) * 60000;
-  if (R.mode === 'flash') ms = Math.max(ms, 334);
+  // 息継ぎは速度比例の小さな伸び（固定の大ポーズはガクつくので使わない）
   const last = text.slice(-1);
-  if (/[。．！？!?…]/.test(last)) ms += 280; else if (/[、，]/.test(last)) ms += 110;
-  if (chunkText == null || isLastChunk(unitIdx)) ms += (u.role === 'head' ? 600 : 360);
-  const kanji = ([...text].filter((c) => /[一-鿿]/.test(c)).length) / chars;
-  if (kanji > 0.45) ms *= 1.12;
-  const minMs = R.mode === 'flash' ? 400 : 220;
-  return clamp(ms, minMs, 1900);
+  if (/[。．！？!?…]/.test(last)) ms += Math.min(ms * 0.6, 200);
+  else if (/[、，]/.test(last)) ms += Math.min(ms * 0.3, 80);
+  if ((chunkText == null || isLastChunk(unitIdx)) && u.role === 'head') ms += 180;
+  const minMs = R.mode === 'flash' ? 85 : 130;
+  return clamp(ms, minMs, 1400);
 }
 function isLastChunk(u) { return R.mode !== 'flash' || R.curChunk >= chunksOf(u).length - 1; }
 function currentDwell() { return R.mode === 'flash' ? dwellMs(R.cur, chunksOf(R.cur)[R.curChunk]) : dwellMs(R.cur, null); }
@@ -436,7 +439,10 @@ function setCurUi() { paintFlowState(); centerCurrent(true); updateBar(); }
 function maybeRecall(nextIdx) {
   if (!settings.recall) return false;
   const cur = R.units[R.cur], nx = R.units[nextIdx];
-  if (nx.role === 'head' && cur.role !== 'head') {
+  if (nx.role === 'head' && (nx.level || 1) <= 2 && cur.role !== 'head') {
+    const pace = paceIndexOf(R.cur);
+    if (pace - (R._lastRecallPace == null ? -999 : R._lastRecallPace) < 15) return false; // 区切り過密なら飛ばす
+    R._lastRecallPace = pace;
     R._wasPlaying = R.playing; pause(); R._recallPending = true;
     const title = (cur.hp && cur.hp.length) ? cur.hp[cur.hp.length - 1] : R.doc.title;
     $('#recall-q').textContent = `「${title}」— ここまでで押さえたいことは？`;
@@ -732,7 +738,7 @@ function guessTitle(blocks, raw) {
 function renderSettings() {
   $('#settings-area').innerHTML = `<div class="set">
     <div class="set-row"><label>文字サイズ <b id="s-size">${settings.readSize}px</b></label><input type="range" id="s-readsize" min="17" max="30" step="1" value="${settings.readSize}"></div>
-    <div class="set-row"><label>読書速度 <b id="s-cpmv">${settings.cpm}</b> 文字/分</label><input type="range" id="s-cpm" min="250" max="1500" step="50" value="${settings.cpm}"></div>
+    <div class="set-row"><label>読書速度 <b id="s-cpmv">${settings.cpm}</b> 文字/分</label><input type="range" id="s-cpm" min="250" max="3500" step="50" value="${settings.cpm}"></div>
     <div class="set-row"><label>書体</label><div class="seg" id="s-serif"><button data-v="0" class="${!settings.serif ? 'on' : ''}">ゴシック</button><button data-v="1" class="${settings.serif ? 'on' : ''}">明朝</button></div></div>
     <div class="set-row"><label>既定モード</label><div class="seg" id="s-mode"><button data-v="focus" class="${settings.defaultMode === 'focus' ? 'on' : ''}">集中</button><button data-v="flash" class="${settings.defaultMode === 'flash' ? 'on' : ''}">フラッシュ</button><button data-v="free" class="${settings.defaultMode === 'free' ? 'on' : ''}">自由</button></div></div>
     <div class="set-row toggle"><label>見出しで想起プロンプト</label><input type="checkbox" id="s-recall" ${settings.recall ? 'checked' : ''}></div>
@@ -827,8 +833,8 @@ function bind() {
   $('#ctrl-play').onclick = togglePlay;
   $('#ctrl-fwd').onclick = () => { pause(); stepForward(false); };
   $('#ctrl-back').onclick = () => { pause(); stepBack(); };
-  $('#ctrl-slow').onclick = () => changeCpm(-50);
-  $('#ctrl-fast').onclick = () => changeCpm(50);
+  $('#ctrl-slow').onclick = () => changeCpm(-1);
+  $('#ctrl-fast').onclick = () => changeCpm(1);
   $('#ctrl-mark').onclick = () => captureUnit(R.cur, false);
 
   bindFlowGestures();
@@ -839,8 +845,9 @@ function bind() {
   $('#hint-ok').onclick = () => { $('#hint').hidden = true; settings.seenHint = true; saveSettings(); };
 }
 
-function changeCpm(d) {
-  settings.cpm = clamp(settings.cpm + d, 250, 1500); saveSettings();
+function changeCpm(dir) {
+  const step = settings.cpm < 800 ? 50 : settings.cpm < 1600 ? 100 : 200;
+  settings.cpm = clamp(settings.cpm + dir * step, 250, 3500); saveSettings();
   const r = $('#reader-speed'); r.textContent = settings.cpm + ' 文字/分'; r.classList.add('show');
   clearTimeout(changeCpm._t); changeCpm._t = setTimeout(() => r.classList.remove('show'), 1100);
 }

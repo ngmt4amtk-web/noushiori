@@ -134,7 +134,12 @@
     <div class="sheet__handle"></div>
     <h2 class="sheet__title">栞を編集</h2>
     <div class="markedit__crumb" id="markedit-crumb"></div>
+    <div class="markedit__hint" id="markedit-hint" hidden>文をタップで範囲を伸縮（外側タップ＝広げる／内側＝狭める）</div>
     <div class="markedit__range" id="markedit-range"></div>
+    <div class="rangectrl" id="markedit-span-ctrl" hidden>
+      <div class="rangectrl__row"><span>始</span><button data-act="su">↑広げる</button><button data-act="sd">狭める↓</button></div>
+      <div class="rangectrl__row"><span>終</span><button data-act="eu">↑狭める</button><button data-act="ed">広げる↓</button></div>
+    </div>
     <textarea id="markedit-note" class="field field--area" rows="3" placeholder="メモ（任意）"></textarea>
     <input type="text" id="markedit-tags" class="field" placeholder="タグ（スペース区切り 例: 設計 重要）">
     <div class="sheet__btns">

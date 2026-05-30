@@ -192,6 +192,15 @@ body.no-fade .sent, body.no-fade .sent.is-read{color:var(--ink);}
 .markedit__range{background:var(--bg3); border:1px solid var(--line); border-radius:12px; padding:12px; margin-top:10px; font-size:14px; line-height:1.8; max-height:30vh; overflow-y:auto;}
 .markedit__range .hl{color:var(--ink); background:rgba(227,184,115,.16); border-radius:3px;}
 .markedit__range .ctx{color:var(--ink-faint);}
+.markedit__range .rs{padding:7px 8px; margin:2px 0; border-radius:8px; color:var(--ink-faint); line-height:1.6; font-size:14px; border-left:3px solid transparent;}
+.markedit__range .rs.on{color:var(--ink); background:var(--bg2); border-left-color:var(--gold);}
+.markedit__range .rs.fc{box-shadow:inset 0 -2px 0 var(--accent);}
+.markedit__hint{font-size:11.5px; color:var(--ink-faint); margin:2px 0 6px;}
+.rangectrl{display:flex; gap:12px; margin-top:10px;}
+.rangectrl__row{display:flex; align-items:center; gap:6px; flex:1;}
+.rangectrl__row span{font-size:12px; color:var(--ink-dim); width:1.4em;}
+.rangectrl__row button{flex:1; background:var(--bg3); border:1px solid var(--line); color:var(--ink); border-radius:9px; padding:9px 4px; font-size:13px;}
+.rangectrl__row button:active{background:var(--line);}
 
 /* ===== ボタン共通 ===== */
 .btn{background:var(--accent); color:#0c0e14; border:none; border-radius:13px; padding:13px 16px; font-size:15px; font-weight:700;}

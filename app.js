@@ -117,6 +117,7 @@ function parseDoc(raw, type) {
       path.length = lv - 1; path[lv - 1] = txt;
       blocks.push({ type: 'heading', level: lv, text: txt, headingPath: path.slice(0, lv) }); i++; continue;
     }
+    if (/^(-{3,}|\*{3,}|_{3,}|―{2,}|ーー+)$/.test(t)) { flushPara(para); para = []; i++; continue; } // 水平線は無視
     if (/^\|.*\|/.test(t)) {
       flushPara(para); para = [];
       const tbl = [];
@@ -571,27 +572,76 @@ async function renderMarks() {
     </div>`;
   }).join('');
 }
+/* 範囲エディタ */
+let editCtx = null;
+function sectionBounds(units, idx) {
+  let lo = idx, hi = idx;
+  for (let k = idx - 1; k >= 0; k--) { if (units[k].role === 'head') break; if (units[k].paceable) lo = k; }
+  for (let k = idx + 1; k < units.length; k++) { if (units[k].role === 'head') break; if (units[k].paceable) hi = k; }
+  return { lo, hi };
+}
+function rangeRegion(units, start, end) {
+  const a = []; for (let k = start; k <= end; k++) if (units[k] && units[k].paceable) a.push(units[k].plain); return a.join('');
+}
+function renderRangeEditor() {
+  const c = editCtx; if (!c) return;
+  let html = '';
+  for (let k = c.lo; k <= c.hi; k++) {
+    const u = c.units[k]; if (!u || !u.paceable) continue;
+    html += `<div class="rs ${k >= c.start && k <= c.end ? 'on' : ''} ${k === c.focal ? 'fc' : ''}" data-k="${k}">${esc(u.plain)}</div>`;
+  }
+  $('#markedit-range').innerHTML = html;
+}
 async function openMarkEdit(id) {
   const m = await DB.get('marks', id); if (!m) return;
   $('#mark-sheet').hidden = false; $('#mark-sheet').dataset.id = id;
   $('#markedit-crumb').textContent = (m.headingPath || []).join(' › ');
-  if (m.focal || m.span) $('#markedit-range').innerHTML = withFocal(m.sentence, m.focal);
-  else $('#markedit-range').innerHTML = `<span class="ctx">${esc(m.before)}</span><span class="hl">${esc(m.sentence)}</span><span class="ctx">${esc(m.after)}</span>`;
   $('#markedit-note').value = m.note || '';
   $('#markedit-tags').value = (m.tags || []).join(' ');
+  editCtx = null;
+  let canEdit = false;
+  if (m.span && m.docId && m.type !== 'recall') {
+    const doc = await DB.get('docs', m.docId);
+    if (doc && doc.blocks) {
+      const units = buildUnits(doc.blocks);
+      if (units[m.span.start] && units[m.span.end]) {
+        const anchor = (typeof m.unitIndex === 'number' && m.unitIndex >= 0 && units[m.unitIndex]) ? m.unitIndex : m.span.start;
+        const b = sectionBounds(units, anchor);
+        editCtx = { units, lo: b.lo, hi: b.hi, start: clamp(m.span.start, b.lo, b.hi), end: clamp(m.span.end, b.lo, b.hi), focal: m.unitIndex };
+        canEdit = true; renderRangeEditor();
+      }
+    }
+  }
+  $('#markedit-hint').hidden = !canEdit;
+  $('#markedit-span-ctrl').hidden = !canEdit;
+  if (!canEdit) {
+    if (m.focal) $('#markedit-range').innerHTML = withFocal(m.sentence, m.focal);
+    else $('#markedit-range').innerHTML = `<span class="ctx">${esc(m.before || '')}</span><span class="hl">${esc(m.sentence)}</span><span class="ctx">${esc(m.after || '')}</span>`;
+  }
 }
 async function saveMarkEdit() {
   const id = $('#mark-sheet').dataset.id; const m = await DB.get('marks', id); if (!m) return;
   m.note = $('#markedit-note').value.trim();
   m.tags = $('#markedit-tags').value.split(/\s+/).map((s) => s.replace(/^#/, '').trim()).filter(Boolean);
+  if (editCtx) { m.span = { start: editCtx.start, end: editCtx.end }; m.sentence = rangeRegion(editCtx.units, editCtx.start, editCtx.end); }
   try { await DB.put('marks', m); } catch (e) {}
-  $('#mark-sheet').hidden = true; renderMarks();
+  $('#mark-sheet').hidden = true; editCtx = null; renderMarks();
+  if (!$('#reader').hidden && R.doc && R.doc.id === m.docId) await refreshMarkedUnits();
 }
 async function deleteMarkEdit() {
   const id = $('#mark-sheet').dataset.id; const m = await DB.get('marks', id);
-  await DB.del('marks', id);
-  if (m && typeof m.unitIndex === 'number') R.markedUnits.delete(m.unitIndex);
+  await DB.del('marks', id); editCtx = null;
   $('#mark-sheet').hidden = true; renderMarks(); refreshBadge();
+  if (m && !$('#reader').hidden && R.doc && R.doc.id === m.docId) await refreshMarkedUnits();
+}
+async function refreshMarkedUnits() {
+  const marks = await DB.byIndex('marks', 'docId', R.doc.id);
+  R.markedUnits = new Set();
+  marks.filter((m) => m.type !== 'recall').forEach((m) => {
+    if (m.span && typeof m.span.start === 'number') { for (let k = m.span.start; k <= m.span.end; k++) R.markedUnits.add(k); }
+    else if (typeof m.unitIndex === 'number' && m.unitIndex >= 0) R.markedUnits.add(m.unitIndex);
+  });
+  if (R.mode !== 'flash') paintFlowState();
 }
 
 /* ---------- 抽出 ---------- */
@@ -856,6 +906,27 @@ function bind() {
   $('#btn-export-all').onclick = () => doExport();
   $('#markedit-save').onclick = saveMarkEdit;
   $('#markedit-del').onclick = deleteMarkEdit;
+  $('#markedit-range').addEventListener('click', (e) => {
+    if (!editCtx) return;
+    const el = e.target.closest('[data-k]'); if (!el) return;
+    const k = +el.dataset.k; const c = editCtx;
+    if (k < c.start) c.start = k;
+    else if (k > c.end) c.end = k;
+    else if ((k - c.start) <= (c.end - k)) c.start = k; else c.end = k;
+    renderRangeEditor();
+  });
+  $('#markedit-span-ctrl').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-act]'); if (!b || !editCtx) return;
+    const c = editCtx;
+    const prevP = (i) => { for (let k = i - 1; k >= c.lo; k--) if (c.units[k].paceable) return k; return i; };
+    const nextP = (i) => { for (let k = i + 1; k <= c.hi; k++) if (c.units[k].paceable) return k; return i; };
+    const a = b.dataset.act;
+    if (a === 'su') c.start = prevP(c.start);
+    else if (a === 'sd') { const n = nextP(c.start); if (n <= c.end) c.start = n; }
+    else if (a === 'eu') { const p = prevP(c.end); if (p >= c.start) c.end = p; }
+    else if (a === 'ed') c.end = nextP(c.end);
+    renderRangeEditor();
+  });
 
   $('#reader-close').onclick = closeReader;
   $('#reader-mode').onclick = () => { const order = ['focus', 'flash', 'free']; setMode(order[(order.indexOf(R.mode) + 1) % 3]); };

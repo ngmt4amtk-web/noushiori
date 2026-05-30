@@ -1,5 +1,5 @@
 /* 脳栞 service worker */
-const CACHE = 'noushiori-v3';
+const CACHE = 'noushiori-v4';
 const ASSETS = [
   './',
   './index.html',

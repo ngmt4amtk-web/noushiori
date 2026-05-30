@@ -64,7 +64,8 @@ input,textarea,select{font-size:16px;} /* iOSのフォーカス自動ズーム�
   border-radius:12px; padding:13px 14px; margin-top:11px;
 }
 .mark__crumb{font-size:11.5px; color:var(--accent2); margin-bottom:6px; font-weight:600;}
-.mark__text{font-size:15.5px; line-height:1.7; color:var(--ink);}
+.mark__text{font-size:15.5px; line-height:1.7; color:var(--ink-dim);}
+mark.fc{background:rgba(227,184,115,.22); color:var(--ink); border-radius:3px; padding:0 1px;}
 .mark__note{font-size:13px; color:var(--gold); margin-top:7px; white-space:pre-wrap;}
 .mark__tags{margin-top:7px; display:flex; gap:6px; flex-wrap:wrap;}
 .tagchip{font-size:11px; background:var(--bg3); border:1px solid var(--line); color:var(--ink-dim); padding:2px 9px; border-radius:999px;}

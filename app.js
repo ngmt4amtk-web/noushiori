@@ -53,7 +53,7 @@ const DB = (() => {
 })();
 
 /* ---------- 設定 ---------- */
-const DEFAULTS = { cpm: 700, readSize: 21, serif: false, defaultMode: 'focus', recall: false, wakelock: true, theme: 'auto', noFade: false, seenHint: false };
+const DEFAULTS = { cpm: 700, readSize: 21, serif: false, defaultMode: 'focus', recall: false, wakelock: true, theme: 'auto', noFade: false, markWidth: 1, seenHint: false };
 let settings = { ...DEFAULTS };
 async function loadSettings() {
   const rec = await DB.get('kv', 'settings');
@@ -278,7 +278,11 @@ async function openReader(docId) {
   if (R.units[R.cur] && !R.units[R.cur].paceable && R.paceable.length) R.cur = R.paceable[0];
   R.curChunk = 0; R.playing = false;
   const marks = await DB.byIndex('marks', 'docId', docId);
-  R.markedUnits = new Set(marks.filter((m) => m.type !== 'recall' && typeof m.unitIndex === 'number' && m.unitIndex >= 0).map((m) => m.unitIndex));
+  R.markedUnits = new Set();
+  marks.filter((m) => m.type !== 'recall').forEach((m) => {
+    if (m.span && typeof m.span.start === 'number') { for (let k = m.span.start; k <= m.span.end; k++) R.markedUnits.add(k); }
+    else if (typeof m.unitIndex === 'number' && m.unitIndex >= 0) R.markedUnits.add(m.unitIndex);
+  });
   $('#reader').hidden = false;
   $('#reader-flow').classList.toggle('is-serif', settings.serif);
   setMode(R.mode, true);
@@ -473,22 +477,36 @@ async function recallDone(save) {
   if (R._wasPlaying) { R._wasPlaying = false; play(); }
 }
 
-/* ---------- 捕獲 ---------- */
+/* ---------- 捕獲（点ではなく「直前に読んだ帯」を掴む） ---------- */
+function captureWindow(focalIdx) {
+  const w = settings.markWidth || 1;
+  // 速度に連動: だいたい直前1.8秒ぶん ≒ round(cpm/1000) 文 さかのぼる（反応ラグ吸収）
+  const back = clamp(Math.round((settings.cpm / 1000) * w), 1, 8);
+  const fwd = w >= 2 ? 2 : 1;
+  let start = focalIdx, end = focalIdx, k, n;
+  k = focalIdx; n = back; while (n > 0) { const p = prevPace(k); if (p < 0 || R.units[p].role === 'head') break; start = p; k = p; n--; }
+  k = focalIdx; n = fwd; while (n > 0) { const q = nextPace(k); if (q < 0 || R.units[q].role === 'head') break; end = q; k = q; n--; }
+  return { start, end };
+}
 async function captureUnit(i, openEdit) {
   const u = R.units[i]; if (!u) return;
-  const pv = i - 1, nx = i + 1;
+  let span = { start: i, end: i };
+  if (u.role !== 'head') span = captureWindow(i);
+  const idxs = [];
+  for (let k = span.start; k <= span.end; k++) if (R.units[k] && R.units[k].paceable) idxs.push(k);
+  if (!idxs.length) idxs.push(i);
+  const region = idxs.map((k) => R.units[k].plain).join('');
   const mark = {
     id: uid(), docId: R.doc.id, type: 'mark', unitIndex: i, blockIndex: u.bi,
     sourceTitle: R.doc.title, headingPath: u.hp || [],
-    sentence: u.plain, paragraph: stripMd(u.blockText || u.text),
-    before: pv >= 0 ? R.units[pv].plain : '', after: nx < R.units.length ? R.units[nx].plain : '',
-    note: '', tags: [], createdAt: now(), cpm: settings.cpm, srs: { box: 0, due: now() + DAY },
+    sentence: region, focal: u.plain, paragraph: stripMd(u.blockText || u.text),
+    span, note: '', tags: [], createdAt: now(), cpm: settings.cpm, srs: { box: 0, due: now() + DAY },
   };
   try { await DB.put('marks', mark); } catch (e) { toast('保存に失敗'); return; }
-  R.markedUnits.add(i);
-  if (R.mode !== 'flash') { const el = $(`#reader-flow [data-u="${i}"]`); if (el) el.classList.add('is-marked'); }
+  idxs.forEach((k) => R.markedUnits.add(k));
+  if (R.mode !== 'flash') idxs.forEach((k) => { const el = $(`#reader-flow [data-u="${k}"]`); if (el) el.classList.add('is-marked'); });
   requestPersist(); refreshBadge(); flashMarkBtn();
-  if (openEdit) openMarkEdit(mark.id); else toast('栞をはさんだ');
+  if (openEdit) openMarkEdit(mark.id); else toast(`栞：${idxs.length}文ぶん保存`);
 }
 function flashMarkBtn() { const b = $('#ctrl-mark'); b.classList.add('flash'); setTimeout(() => b.classList.remove('flash'), 320); }
 
@@ -521,6 +539,14 @@ async function deleteDoc(id) {
    ========================================================= */
 let marksFilter = { doc: 'all', tag: 'all' };
 function titleOf(m, dt) { return dt[m.docId] || m.sourceTitle || '出典なし'; }
+function withFocal(region, focal) {
+  region = region || ''; focal = focal || '';
+  if (focal && region.includes(focal) && focal !== region) {
+    const i = region.indexOf(focal);
+    return esc(region.slice(0, i)) + '<mark class="fc">' + esc(focal) + '</mark>' + esc(region.slice(i + focal.length));
+  }
+  return esc(region);
+}
 async function renderMarks() {
   const marks = (await DB.all('marks')).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   const docs = await DB.all('docs'); const dt = {}; docs.forEach((d) => dt[d.id] = d.title);
@@ -538,7 +564,7 @@ async function renderMarks() {
     const crumb = [titleOf(m, dt)].concat(m.headingPath || []).join(' › ');
     return `<div class="mark" data-mark="${m.id}">
       <div class="mark__crumb">${m.type === 'recall' ? '✎ まとめ · ' : ''}${m.orphan ? '※ ' : ''}${esc(crumb)}</div>
-      <div class="mark__text">${esc(m.sentence)}</div>
+      <div class="mark__text">${withFocal(m.sentence, m.focal)}</div>
       ${m.note ? `<div class="mark__note">✎ ${esc(m.note)}</div>` : ''}
       ${(m.tags || []).length ? `<div class="mark__tags">${m.tags.map((t) => `<span class="tagchip">#${esc(t)}</span>`).join('')}</div>` : ''}
       <div class="mark__foot"><small>${new Date(m.createdAt).toLocaleDateString('ja-JP')}</small><button class="mark__open" data-edit="${m.id}">編集</button></div>
@@ -549,7 +575,8 @@ async function openMarkEdit(id) {
   const m = await DB.get('marks', id); if (!m) return;
   $('#mark-sheet').hidden = false; $('#mark-sheet').dataset.id = id;
   $('#markedit-crumb').textContent = (m.headingPath || []).join(' › ');
-  $('#markedit-range').innerHTML = `<span class="ctx">${esc(m.before)}</span><span class="hl">${esc(m.sentence)}</span><span class="ctx">${esc(m.after)}</span>`;
+  if (m.focal || m.span) $('#markedit-range').innerHTML = withFocal(m.sentence, m.focal);
+  else $('#markedit-range').innerHTML = `<span class="ctx">${esc(m.before)}</span><span class="hl">${esc(m.sentence)}</span><span class="ctx">${esc(m.after)}</span>`;
   $('#markedit-note').value = m.note || '';
   $('#markedit-tags').value = (m.tags || []).join(' ');
 }
@@ -586,7 +613,7 @@ async function buildExport(fmt, opts = {}) {
       const hp = (m.headingPath || []).join(' › ');
       if (hp && hp !== lastHp) { out += `\n### ${hp}\n`; lastHp = hp; }
       out += `\n> ${m.sentence}\n`;
-      if (m.before || m.after) out += `\n文脈：${m.before} **${m.sentence}** ${m.after}\n`;
+      if (m.focal && m.focal !== m.sentence) out += `\n中心：${m.focal}\n`;
       if (m.note) out += `\nメモ：${m.note}\n`;
       if ((m.tags || []).length) out += `\nタグ：${m.tags.map((t) => '#' + t).join(' ')}\n`;
     });
@@ -741,6 +768,7 @@ function renderSettings() {
     <div class="set-row"><label>読書速度 <b id="s-cpmv">${settings.cpm}</b> 文字/分</label><input type="range" id="s-cpm" min="250" max="3500" step="50" value="${settings.cpm}"></div>
     <div class="set-row"><label>書体</label><div class="seg" id="s-serif"><button data-v="0" class="${!settings.serif ? 'on' : ''}">ゴシック</button><button data-v="1" class="${settings.serif ? 'on' : ''}">明朝</button></div></div>
     <div class="set-row"><label>既定モード</label><div class="seg" id="s-mode"><button data-v="focus" class="${settings.defaultMode === 'focus' ? 'on' : ''}">集中</button><button data-v="flash" class="${settings.defaultMode === 'flash' ? 'on' : ''}">フラッシュ</button><button data-v="free" class="${settings.defaultMode === 'free' ? 'on' : ''}">自由</button></div></div>
+    <div class="set-row"><label>栞の範囲（押した周辺をどれだけ拾うか）</label><div class="seg" id="s-markw"><button data-v="0.5" class="${settings.markWidth === 0.5 ? 'on' : ''}">せまい</button><button data-v="1" class="${(settings.markWidth || 1) === 1 ? 'on' : ''}">標準</button><button data-v="2" class="${settings.markWidth === 2 ? 'on' : ''}">ひろい</button></div></div>
     <div class="set-row toggle"><label>見出しで想起プロンプト</label><input type="checkbox" id="s-recall" ${settings.recall ? 'checked' : ''}></div>
     <div class="set-row toggle"><label>読書中に画面を眠らせない</label><input type="checkbox" id="s-wake" ${settings.wakelock ? 'checked' : ''}></div>
     <div class="set-row toggle"><label>高コントラスト（薄字を減らす）</label><input type="checkbox" id="s-nofade" ${settings.noFade ? 'checked' : ''}></div>
@@ -756,6 +784,7 @@ function renderSettings() {
   $('#s-serif').onclick = (e) => { const b = e.target.closest('[data-v]'); if (!b) return; settings.serif = b.dataset.v === '1'; saveSettings(); renderSettings(); };
   $('#s-mode').onclick = (e) => { const b = e.target.closest('[data-v]'); if (!b) return; settings.defaultMode = b.dataset.v; saveSettings(); renderSettings(); };
   $('#s-theme').onclick = (e) => { const b = e.target.closest('[data-v]'); if (!b) return; settings.theme = b.dataset.v; applySettings(); saveSettings(); renderSettings(); };
+  $('#s-markw').onclick = (e) => { const b = e.target.closest('[data-v]'); if (!b) return; settings.markWidth = parseFloat(b.dataset.v); saveSettings(); renderSettings(); };
   $('#s-recall').onchange = (e) => { settings.recall = e.target.checked; saveSettings(); };
   $('#s-wake').onchange = (e) => { settings.wakelock = e.target.checked; saveSettings(); };
   $('#s-nofade').onchange = (e) => { settings.noFade = e.target.checked; applySettings(); saveSettings(); };

@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0e0f13">
+<meta name="color-scheme" content="dark light">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="脳栞">
+<meta name="description" content="読む・捕獲する・抜き出す・思い出す。md/txtを脳に入れるための読書ツール。">
+<title>脳栞</title>
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="apple-touch-icon" href="./icons/icon-180.png">
+<link rel="icon" type="image/png" href="./icons/icon-192.png">
+<link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+
+<!-- ============ メイン（タブ画面） ============ -->
+<main id="app">
+
+  <!-- 本棚 -->
+  <section class="screen is-active" id="screen-library" data-screen="library">
+    <header class="topbar">
+      <h1 class="topbar__title">脳栞</h1>
+      <button class="iconbtn" id="btn-import" aria-label="読み込む">＋ 取り込む</button>
+    </header>
+    <div class="scroll" id="library-list">
+      <!-- JSで描画 -->
+    </div>
+  </section>
+
+  <!-- 栞（捕獲一覧） -->
+  <section class="screen" id="screen-marks" data-screen="marks">
+    <header class="topbar">
+      <h1 class="topbar__title">栞</h1>
+      <button class="iconbtn" id="btn-export-all" aria-label="抽出">抽出</button>
+    </header>
+    <div class="marks-filter" id="marks-filter"></div>
+    <div class="scroll" id="marks-list"></div>
+  </section>
+
+  <!-- 想起（復習） -->
+  <section class="screen" id="screen-review" data-screen="review">
+    <header class="topbar">
+      <h1 class="topbar__title">想起</h1>
+      <span class="topbar__sub" id="review-count"></span>
+    </header>
+    <div class="scroll" id="review-area"></div>
+  </section>
+
+  <!-- 設定 -->
+  <section class="screen" id="screen-settings" data-screen="settings">
+    <header class="topbar"><h1 class="topbar__title">設定</h1></header>
+    <div class="scroll" id="settings-area"></div>
+  </section>
+
+</main>
+
+<!-- ============ タブバー ============ -->
+<nav class="tabbar" id="tabbar">
+  <button class="tab is-active" data-go="library"><span class="tab__ico">▤</span><span class="tab__lbl">本棚</span></button>
+  <button class="tab" data-go="marks"><span class="tab__ico">❏</span><span class="tab__lbl">栞</span></button>
+  <button class="tab" data-go="review"><span class="tab__ico">↻</span><span class="tab__lbl">想起</span><span class="tab__badge" id="tab-badge" hidden>0</span></button>
+  <button class="tab" data-go="settings"><span class="tab__ico">⚙</span><span class="tab__lbl">設定</span></button>
+</nav>
+
+<!-- ============ リーダー（全画面オーバーレイ） ============ -->
+<div class="reader" id="reader" hidden>
+  <header class="reader__top" id="reader-top">
+    <button class="reader__close" id="reader-close" aria-label="閉じる">✕</button>
+    <div class="reader__crumb" id="reader-crumb"></div>
+    <button class="reader__mode" id="reader-mode" aria-label="モード切替">集中</button>
+  </header>
+
+  <div class="reader__stage" id="reader-stage">
+    <!-- 集中 / 自由モード: 全文表示 -->
+    <div class="reader__flow" id="reader-flow"></div>
+    <!-- フラッシュモード: 中央1チャンク -->
+    <div class="reader__rsvp" id="reader-rsvp" hidden>
+      <div class="rsvp__guide" id="rsvp-guide" hidden></div>
+      <div class="rsvp__chunk" id="rsvp-chunk"></div>
+      <div class="rsvp__sentence" id="rsvp-sentence"></div>
+    </div>
+  </div>
+
+  <div class="reader__progress"><div class="reader__bar" id="reader-bar"></div></div>
+
+  <footer class="reader__ctrl" id="reader-ctrl">
+    <button class="ctrl ctrl--step" id="ctrl-back" aria-label="戻る">◀</button>
+    <button class="ctrl ctrl--speed" id="ctrl-slow" aria-label="遅く">－</button>
+    <button class="ctrl ctrl--play" id="ctrl-play" aria-label="再生／停止">▶</button>
+    <button class="ctrl ctrl--mark" id="ctrl-mark" aria-label="栞をはさむ">❏ 栞</button>
+    <button class="ctrl ctrl--speed" id="ctrl-fast" aria-label="速く">＋</button>
+    <button class="ctrl ctrl--step" id="ctrl-fwd" aria-label="進む">▶</button>
+  </footer>
+  <div class="reader__speedreadout" id="reader-speed"></div>
+</div>
+
+<!-- ============ 想起プロンプト（セクション末） ============ -->
+<div class="recall" id="recall" hidden>
+  <div class="recall__card">
+    <div class="recall__q" id="recall-q"></div>
+    <textarea class="recall__input" id="recall-input" rows="3" placeholder="ひとことで（思い出すための記録）"></textarea>
+    <div class="recall__btns">
+      <button class="btn btn--ghost" id="recall-skip">とばす</button>
+      <button class="btn" id="recall-save">記録して続ける</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 取り込みシート ============ -->
+<div class="sheet" id="import-sheet" hidden>
+  <div class="sheet__panel">
+    <div class="sheet__handle"></div>
+    <h2 class="sheet__title">取り込む</h2>
+    <label class="bigbtn" for="file-input">📄 ファイルを選ぶ（.md / .txt）</label>
+    <input type="file" id="file-input" hidden>
+    <div class="sheet__or">または貼り付け</div>
+    <input type="text" id="paste-title" class="field" placeholder="タイトル（任意）">
+    <textarea id="paste-body" class="field field--area" rows="6" placeholder="ここに本文を貼り付け…"></textarea>
+    <div class="sheet__btns">
+      <button class="btn btn--ghost" id="import-cancel">やめる</button>
+      <button class="btn" id="import-paste">取り込む</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 栞編集シート ============ -->
+<div class="sheet" id="mark-sheet" hidden>
+  <div class="sheet__panel">
+    <div class="sheet__handle"></div>
+    <h2 class="sheet__title">栞を編集</h2>
+    <div class="markedit__crumb" id="markedit-crumb"></div>
+    <div class="markedit__range" id="markedit-range"></div>
+    <textarea id="markedit-note" class="field field--area" rows="3" placeholder="メモ（任意）"></textarea>
+    <input type="text" id="markedit-tags" class="field" placeholder="タグ（スペース区切り 例: 設計 重要）">
+    <div class="sheet__btns">
+      <button class="btn btn--danger" id="markedit-del">削除</button>
+      <button class="btn" id="markedit-save">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- トースト -->
+<div class="toast" id="toast" hidden></div>
+
+<!-- 初回ヒント -->
+<div class="hint" id="hint" hidden>
+  <div class="hint__card">
+    <h2>脳栞のうごき</h2>
+    <ul>
+      <li><b>本文をタップ</b> … 流れを止める／再開</li>
+      <li><b>文をもう一度タップ</b> … その文に飛ぶ</li>
+      <li><b>❏栞ボタン</b> … 今いる文を前後ごと捕獲</li>
+      <li><b>文を長押し</b> … その文を捕獲＋メモ</li>
+      <li><b>◀ ▶</b> … 1文ずつ・<b>－＋</b>で速度</li>
+      <li>右上で <b>集中／フラッシュ／自由</b> を切替</li>
+    </ul>
+    <button class="btn" id="hint-ok">はじめる</button>
+  </div>
+</div>
+
+<script src="./app.js"></script>
+</body>
+</html>

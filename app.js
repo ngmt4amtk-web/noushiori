@@ -117,7 +117,7 @@ function parseDoc(raw, type) {
       path.length = lv - 1; path[lv - 1] = txt;
       blocks.push({ type: 'heading', level: lv, text: txt, headingPath: path.slice(0, lv) }); i++; continue;
     }
-    if (/^(-{3,}|\*{3,}|_{3,}|―{2,}|ーー+)$/.test(t)) { flushPara(para); para = []; i++; continue; } // 水平線は無視
+    if (/^(-{3,}|\*{3,}|_{3,}|―{3,}|─{3,}|＿{3,})$/.test(t)) { flushPara(para); para = []; i++; continue; } // 水平線は無視（本文の約物2連は巻き込まない）
     if (/^\|.*\|/.test(t)) {
       flushPara(para); para = [];
       const tbl = [];
@@ -281,7 +281,7 @@ async function openReader(docId) {
   const marks = await DB.byIndex('marks', 'docId', docId);
   R.markedUnits = new Set();
   marks.filter((m) => m.type !== 'recall').forEach((m) => {
-    if (m.span && typeof m.span.start === 'number') { for (let k = m.span.start; k <= m.span.end; k++) R.markedUnits.add(k); }
+    if (m.span && typeof m.span.start === 'number') { for (let k = m.span.start; k <= m.span.end; k++) if (R.units[k] && R.units[k].paceable) R.markedUnits.add(k); }
     else if (typeof m.unitIndex === 'number' && m.unitIndex >= 0) R.markedUnits.add(m.unitIndex);
   });
   $('#reader').hidden = false;
@@ -482,7 +482,7 @@ async function recallDone(save) {
 function captureWindow(focalIdx) {
   const w = settings.markWidth || 1;
   // 速度に連動: だいたい直前1.8秒ぶん ≒ round(cpm/1000) 文 さかのぼる（反応ラグ吸収）
-  const back = clamp(Math.round((settings.cpm / 1000) * w), 1, 8);
+  const back = clamp(Math.round((settings.cpm / 1000) * w) + (w >= 1 ? 1 : 0), 1, 8);
   const fwd = w >= 2 ? 2 : 1;
   let start = focalIdx, end = focalIdx, k, n;
   k = focalIdx; n = back; while (n > 0) { const p = prevPace(k); if (p < 0 || R.units[p].role === 'head') break; start = p; k = p; n--; }
@@ -583,14 +583,18 @@ function sectionBounds(units, idx) {
 function rangeRegion(units, start, end) {
   const a = []; for (let k = start; k <= end; k++) if (units[k] && units[k].paceable) a.push(units[k].plain); return a.join('');
 }
-function renderRangeEditor() {
+function renderRangeEditor(focusEdge) {
   const c = editCtx; if (!c) return;
   let html = '';
   for (let k = c.lo; k <= c.hi; k++) {
     const u = c.units[k]; if (!u || !u.paceable) continue;
     html += `<div class="rs ${k >= c.start && k <= c.end ? 'on' : ''} ${k === c.focal ? 'fc' : ''}" data-k="${k}">${esc(u.plain)}</div>`;
   }
-  $('#markedit-range').innerHTML = html;
+  const box = $('#markedit-range'); box.innerHTML = html;
+  // innerHTML差し替えでscrollTopが0に戻るので、動かした端を窓内に追従させる
+  const sel = focusEdge === 'end' ? c.end : focusEdge === 'start' ? c.start : (typeof c.focal === 'number' && c.focal >= c.lo && c.focal <= c.hi ? c.focal : c.start);
+  const tgt = box.querySelector(`[data-k="${sel}"]`);
+  if (tgt) tgt.scrollIntoView({ block: 'nearest' });
 }
 async function openMarkEdit(id) {
   const m = await DB.get('marks', id); if (!m) return;
@@ -608,7 +612,7 @@ async function openMarkEdit(id) {
         const anchor = (typeof m.unitIndex === 'number' && m.unitIndex >= 0 && units[m.unitIndex]) ? m.unitIndex : m.span.start;
         const b = sectionBounds(units, anchor);
         editCtx = { units, lo: b.lo, hi: b.hi, start: clamp(m.span.start, b.lo, b.hi), end: clamp(m.span.end, b.lo, b.hi), focal: m.unitIndex };
-        canEdit = true; renderRangeEditor();
+        canEdit = true; renderRangeEditor('focal');
       }
     }
   }
@@ -623,7 +627,13 @@ async function saveMarkEdit() {
   const id = $('#mark-sheet').dataset.id; const m = await DB.get('marks', id); if (!m) return;
   m.note = $('#markedit-note').value.trim();
   m.tags = $('#markedit-tags').value.split(/\s+/).map((s) => s.replace(/^#/, '').trim()).filter(Boolean);
-  if (editCtx) { m.span = { start: editCtx.start, end: editCtx.end }; m.sentence = rangeRegion(editCtx.units, editCtx.start, editCtx.end); }
+  if (editCtx) {
+    m.span = { start: editCtx.start, end: editCtx.end };
+    m.sentence = rangeRegion(editCtx.units, editCtx.start, editCtx.end);
+    const f = editCtx.focal;
+    if (typeof f === 'number' && f >= editCtx.start && f <= editCtx.end && editCtx.units[f] && editCtx.units[f].paceable) { m.focal = editCtx.units[f].plain; m.unitIndex = f; }
+    else m.focal = '';
+  }
   try { await DB.put('marks', m); } catch (e) {}
   $('#mark-sheet').hidden = true; editCtx = null; renderMarks();
   if (!$('#reader').hidden && R.doc && R.doc.id === m.docId) await refreshMarkedUnits();
@@ -638,7 +648,7 @@ async function refreshMarkedUnits() {
   const marks = await DB.byIndex('marks', 'docId', R.doc.id);
   R.markedUnits = new Set();
   marks.filter((m) => m.type !== 'recall').forEach((m) => {
-    if (m.span && typeof m.span.start === 'number') { for (let k = m.span.start; k <= m.span.end; k++) R.markedUnits.add(k); }
+    if (m.span && typeof m.span.start === 'number') { for (let k = m.span.start; k <= m.span.end; k++) if (R.units[k] && R.units[k].paceable) R.markedUnits.add(k); }
     else if (typeof m.unitIndex === 'number' && m.unitIndex >= 0) R.markedUnits.add(m.unitIndex);
   });
   if (R.mode !== 'flash') paintFlowState();
@@ -906,26 +916,30 @@ function bind() {
   $('#btn-export-all').onclick = () => doExport();
   $('#markedit-save').onclick = saveMarkEdit;
   $('#markedit-del').onclick = deleteMarkEdit;
-  $('#markedit-range').addEventListener('click', (e) => {
-    if (!editCtx) return;
-    const el = e.target.closest('[data-k]'); if (!el) return;
-    const k = +el.dataset.k; const c = editCtx;
-    if (k < c.start) c.start = k;
-    else if (k > c.end) c.end = k;
-    else if ((k - c.start) <= (c.end - k)) c.start = k; else c.end = k;
-    renderRangeEditor();
-  });
+  (() => {
+    const box = $('#markedit-range'); let sx = 0, sy = 0, st = 0, sTop = 0;
+    box.addEventListener('pointerdown', (e) => { sx = e.clientX; sy = e.clientY; st = performance.now(); sTop = box.scrollTop; });
+    box.addEventListener('pointerup', (e) => {
+      if (!editCtx) return;
+      if (Math.abs(e.clientX - sx) > 12 || Math.abs(e.clientY - sy) > 12 || Math.abs(box.scrollTop - sTop) > 4 || performance.now() - st > 500) return; // スクロール/長押しはタップ扱いしない
+      const el = e.target.closest('[data-k]'); if (!el) return;
+      const k = +el.dataset.k; const c = editCtx; let edge;
+      if (k < c.start) { c.start = k; edge = 'start'; }
+      else if (k > c.end) { c.end = k; edge = 'end'; }
+      else if ((k - c.start) <= (c.end - k)) { c.start = k; edge = 'start'; } else { c.end = k; edge = 'end'; }
+      renderRangeEditor(edge);
+    });
+  })();
   $('#markedit-span-ctrl').addEventListener('click', (e) => {
     const b = e.target.closest('[data-act]'); if (!b || !editCtx) return;
     const c = editCtx;
     const prevP = (i) => { for (let k = i - 1; k >= c.lo; k--) if (c.units[k].paceable) return k; return i; };
     const nextP = (i) => { for (let k = i + 1; k <= c.hi; k++) if (c.units[k].paceable) return k; return i; };
     const a = b.dataset.act;
-    if (a === 'su') c.start = prevP(c.start);
-    else if (a === 'sd') { const n = nextP(c.start); if (n <= c.end) c.start = n; }
-    else if (a === 'eu') { const p = prevP(c.end); if (p >= c.start) c.end = p; }
-    else if (a === 'ed') c.end = nextP(c.end);
-    renderRangeEditor();
+    if (a === 'su') { c.start = prevP(c.start); renderRangeEditor('start'); }
+    else if (a === 'sd') { const n = nextP(c.start); if (n <= c.end) c.start = n; renderRangeEditor('start'); }
+    else if (a === 'eu') { const p = prevP(c.end); if (p >= c.start) c.end = p; renderRangeEditor('end'); }
+    else if (a === 'ed') { c.end = nextP(c.end); renderRangeEditor('end'); }
   });
 
   $('#reader-close').onclick = closeReader;

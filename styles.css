@@ -10,6 +10,7 @@
   --tab-h:58px;
 }
 *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+[hidden]{display:none !important;} /* hidden属性をクラスのdisplayより必ず優先（オーバーレイ表示バグ対策） */
 html,body{margin:0;padding:0;height:100%;}
 body{
   background:var(--bg); color:var(--ink);

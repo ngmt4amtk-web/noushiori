@@ -581,14 +581,16 @@ function sectionBounds(units, idx) {
   return { lo, hi };
 }
 function rangeRegion(units, start, end) {
-  const a = []; for (let k = start; k <= end; k++) if (units[k] && units[k].paceable) a.push(units[k].plain); return a.join('');
+  const a = []; for (let k = start; k <= end; k++) { const u = units[k]; if (u && u.paceable && u.role !== 'head') a.push(u.plain); }
+  return a.length ? a.join('') : (units[start] ? units[start].plain : '');
 }
 function renderRangeEditor(focusEdge) {
   const c = editCtx; if (!c) return;
   let html = '';
   for (let k = c.lo; k <= c.hi; k++) {
     const u = c.units[k]; if (!u || !u.paceable) continue;
-    html += `<div class="rs ${k >= c.start && k <= c.end ? 'on' : ''} ${k === c.focal ? 'fc' : ''}" data-k="${k}">${esc(u.plain)}</div>`;
+    const cls = 'rs' + (u.role === 'head' ? ' rh' : '') + (k >= c.start && k <= c.end ? ' on' : '') + (k === c.focal ? ' fc' : '');
+    html += `<div class="${cls}" data-k="${k}">${esc(u.plain)}</div>`;
   }
   const box = $('#markedit-range'); box.innerHTML = html;
   // innerHTML差し替えでscrollTopが0に戻るので、動かした端を窓内に追従させる
@@ -609,9 +611,9 @@ async function openMarkEdit(id) {
     if (doc && doc.blocks) {
       const units = buildUnits(doc.blocks);
       if (units[m.span.start] && units[m.span.end]) {
-        const anchor = (typeof m.unitIndex === 'number' && m.unitIndex >= 0 && units[m.unitIndex]) ? m.unitIndex : m.span.start;
-        const b = sectionBounds(units, anchor);
-        editCtx = { units, lo: b.lo, hi: b.hi, start: clamp(m.span.start, b.lo, b.hi), end: clamp(m.span.end, b.lo, b.hi), focal: m.unitIndex };
+        let lo = units.findIndex((u) => u.paceable); if (lo < 0) lo = 0;
+        let hi = lo; for (let k = units.length - 1; k >= 0; k--) if (units[k].paceable) { hi = k; break; }
+        editCtx = { units, lo, hi, start: clamp(m.span.start, lo, hi), end: clamp(m.span.end, lo, hi), focal: m.unitIndex };
         canEdit = true; renderRangeEditor('focal');
       }
     }

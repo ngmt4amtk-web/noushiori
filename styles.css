@@ -195,6 +195,8 @@ body.no-fade .sent, body.no-fade .sent.is-read{color:var(--ink);}
 .markedit__range .rs{display:flex; align-items:center; min-height:44px; padding:7px 9px; margin:3px 0; border-radius:8px; color:var(--ink-faint); line-height:1.6; font-size:14px; border-left:3px solid transparent;}
 .markedit__range .rs.on{color:var(--ink); background:var(--bg2); border-left-color:var(--gold);}
 .markedit__range .rs.fc{box-shadow:inset 0 -2px 0 var(--accent);}
+.markedit__range .rs.rh{min-height:0; margin-top:10px; font-weight:700; font-size:12.5px; color:var(--accent2); opacity:.85;}
+.markedit__range .rs.rh.on{background:none; border-left-color:var(--gold);}
 .markedit__hint{font-size:11.5px; color:var(--ink-faint); margin:2px 0 6px;}
 .rangectrl{display:flex; gap:12px; margin-top:10px;}
 .rangectrl__row{display:flex; align-items:center; gap:6px; flex:1;}
